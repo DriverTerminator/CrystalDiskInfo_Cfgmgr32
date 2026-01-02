@@ -846,6 +846,7 @@ VOID CAtaSmart::Init(BOOL useWmi, BOOL advancedDiskSearch, PBOOL flagChangeDisk,
 		LPCWSTR pszIdBase = nullptr;
         LPCWSTR pszIdBaseTmp = nullptr;
         WCHAR szDevId[MAX_DEVICE_ID_LEN] = { 0 };
+        WCHAR ParentDevId[MAX_DEVICE_ID_LEN] = { 0 };
         WCHAR* COMPATIBLEIDSList = NULL;
         WCHAR* HARDWAREIDList = NULL;
         WCHAR* szClassGUID = NULL;
@@ -1366,12 +1367,15 @@ VOID CAtaSmart::Init(BOOL useWmi, BOOL advancedDiskSearch, PBOOL flagChangeDisk,
                                 tmp.Replace(_T("Silicon Image SiI "), _T(""));
                                 siliconImageType = _tstoi(tmp);
                             }
+                            // https://crystalmark.info/bbs/c-board.cgi?cmd=one;no=836;id=diskinfo#836
                             else if (name1.Find(_T("BUFFALO IFC-PCI2ES")) == 0)     // 这个设备没找到任何资料保持原样
                             {
                                 flagSiliconImage = TRUE;
                                 siliconImageType = 3112;
                             }
-                            else if (name1.Find(_T("BUFFALO IFC-PCIE2SA")) == 0)     // 这个设备也没找到任何资料保持原样
+                            // https://crystalmark.info/bbs/c-board.cgi?cmd=one;no=1270;id=diskinfo#1270
+                            // http://dream-drive.net/archives/2010/01/ifc-pcie2sawo.html
+                            if (!_wcsicmp(p, L"PCI\\VEN_1095&DEV_3132"))
                             {
                                 flagSiliconImage = TRUE;
                                 siliconImageType = 3132;
@@ -1774,7 +1778,8 @@ VOID CAtaSmart::Init(BOOL useWmi, BOOL advancedDiskSearch, PBOOL flagChangeDisk,
 				}
 			}
 #endif
-			try
+			///*
+            try
 			{
 				LPCWSTR pszId = pszIdBase;
 
@@ -1794,57 +1799,29 @@ VOID CAtaSmart::Init(BOOL useWmi, BOOL advancedDiskSearch, PBOOL flagChangeDisk,
 					try
 					{
 						DEVINST devInst;
-						cr = CM_Locate_DevNodeW(&devInst, (DEVINSTID_W)pszId, CM_LOCATE_DEVNODE_NORMAL);
+                        ZeroMemory(szDevId, MAX_DEVICE_ID_LEN * sizeof(WCHAR));
+                        wcscpy_s(szDevId, MAX_DEVICE_ID_LEN, pszId);
+						cr = CM_Locate_DevNodeW(&devInst, (DEVINSTID_W)szDevId, CM_LOCATE_DEVNODE_NORMAL);
 						if (cr != CR_SUCCESS)
 							throw (DWORD)cr;
 
 						// Win32_DiskDrive
 
-                        /*
-						WCHAR szClass[64] = { 0 };
-						ULONG cbClass = sizeof(szClass);
-						if (CM_Get_DevNode_Registry_PropertyW(devInst, CM_DRP_CLASS, NULL, szClass, &cbClass,0) != CR_SUCCESS
-							|| _wcsicmp(szClass, L"DiskDrive") != 0)
-                        */
                         WCHAR* szClassGUID = NULL;
-                        if (DoCM_Get_DevNode_Registry_PropertyW(&devInst, (DEVINSTID_W)pszId, CM_DRP_CLASSGUID, szClassGUID) != CR_SUCCESS || szClassGUID == NULL || (szClassGUID && _wcsicmp(szClassGUID, L"{4d36e967-e325-11ce-bfc1-08002be10318}")))
+                        if (DoCM_Get_DevNode_Registry_PropertyW(&devInst, (DEVINSTID_W)szDevId, CM_DRP_CLASSGUID, szClassGUID) != CR_SUCCESS || szClassGUID == NULL || (szClassGUID && _wcsicmp(szClassGUID, L"{4d36e967-e325-11ce-bfc1-08002be10318}")))
 							goto NextDisk;
 						//DebugPrint(pszId);
 						// \Device\HarddiskN\DRx
 						//WCHAR szBuf[MAX_PATH] = {};
                         WCHAR* szBuf = NULL;
-						/*
-						// 这个方法获取磁盘序号错误。
-						ULONG cbPdo = sizeof(szBuf);
-						if (CM_Get_DevNode_Registry_PropertyW(devInst, CM_DRP_PHYSICAL_DEVICE_OBJECT_NAME, NULL, szBuf, &cbPdo, 0) == CR_SUCCESS)
-						{
-							DebugPrint(szBuf);
-							CString pdo(szBuf);
-							int pos = pdo.Find(L"Harddisk");
-							if (pos >= 0)
-							{
-								pos += (int)lstrlenW(L"Harddisk");
-								CString num;
-								while (pos < pdo.GetLength() && iswdigit(pdo[pos]))
-								{
-									num += pdo[pos];
-									pos++;
-								}
-								if (!num.IsEmpty())
-								{
-									physicalDriveId = _wtoi(num);
-								}
-							}
-						}
-						*/
 						ULONG ulLength = 0;
-						if (CM_Get_Device_Interface_List_SizeW(&ulLength, (LPGUID)&GUID_DEVINTERFACE_DISK, (DEVINSTID_W)pszId, CM_GET_DEVICE_INTERFACE_LIST_PRESENT) == CR_SUCCESS && ulLength > 0)
+						if (CM_Get_Device_Interface_List_SizeW(&ulLength, (LPGUID)&GUID_DEVINTERFACE_DISK, (DEVINSTID_W)szDevId, CM_GET_DEVICE_INTERFACE_LIST_PRESENT) == CR_SUCCESS && ulLength > 0)
 						{
 							PWSTR pInterfaceList = (PWSTR)malloc(ulLength * sizeof(WCHAR));
 							if (pInterfaceList)
 							{
 								ZeroMemory(pInterfaceList, ulLength * sizeof(WCHAR));
-								if (CM_Get_Device_Interface_ListW((LPGUID)&GUID_DEVINTERFACE_DISK, (DEVINSTID_W)pszId, pInterfaceList, ulLength, CM_GET_DEVICE_INTERFACE_LIST_PRESENT) == CR_SUCCESS && pInterfaceList[0] != L'\0')
+								if (CM_Get_Device_Interface_ListW((LPGUID)&GUID_DEVINTERFACE_DISK, (DEVINSTID_W)szDevId, pInterfaceList, ulLength, CM_GET_DEVICE_INTERFACE_LIST_PRESENT) == CR_SUCCESS && pInterfaceList[0] != L'\0')
 								{
 									HANDLE hDisk = CreateFileW(
 										pInterfaceList,
@@ -1858,7 +1835,8 @@ VOID CAtaSmart::Init(BOOL useWmi, BOOL advancedDiskSearch, PBOOL flagChangeDisk,
 
 									if (hDisk != INVALID_HANDLE_VALUE)
 									{
-										STORAGE_DEVICE_NUMBER sdn = { 0 };
+										// physicalDriveId
+                                        STORAGE_DEVICE_NUMBER sdn = { 0 };
 										DWORD bytesReturned = 0;
 										if (DeviceIoControl(
 											hDisk,
@@ -1873,8 +1851,134 @@ VOID CAtaSmart::Init(BOOL useWmi, BOOL advancedDiskSearch, PBOOL flagChangeDisk,
 										{
 											physicalDriveId = sdn.DeviceNumber;
 										}
+                                        // Get Size / SCSIPort / SCSITargetId / SCSIBus / MediaType
+                                        // Size
+                                        GET_LENGTH_INFORMATION lenInfo = { 0 };
+                                        DWORD dwRet = 0;
+                                        if (DeviceIoControl(hDisk, IOCTL_DISK_GET_LENGTH_INFO, NULL, 0, &lenInfo, sizeof(lenInfo), &dwRet, NULL))
+                                        {
+                                            diskSize.Format(_T("%I64u"), (ULONGLONG)lenInfo.Length.QuadPart);
+                                            DebugPrint(_T("diskSize:") + diskSize);
+                                        }
+
+                                        // MediaType
+                                        dwRet = 0;
+                                        DISK_GEOMETRY dg = { 0 };
+                                        if (DeviceIoControl(hDisk, IOCTL_DISK_GET_DRIVE_GEOMETRY, NULL, 0, &dg, sizeof(dg), &dwRet, NULL))
+                                        {
+                                            if (dg.MediaType == FixedMedia)
+                                                mediaType = _T("fixed");
+                                            else
+                                                mediaType = _T("removable");
+                                            DebugPrint(_T("mediaType:") + mediaType);
+                                            mediaType.MakeLower();
+                                        }
+
+                                        // SCSIPort / SCSITargetId / SCSIBus
+                                        dwRet = 0;
+                                        SCSI_ADDRESS sa = { 0 };
+                                        if (DeviceIoControl(hDisk, IOCTL_SCSI_GET_ADDRESS, NULL, 0, &sa, sizeof(sa), &dwRet, NULL))
+                                        {
+                                            scsiPort = sa.PortNumber;
+                                            scsiTargetId = sa.TargetId;
+                                            scsiBus = sa.PathId;
+                                        }
+
+                                        // InterfaceType
+                                        dwRet = 0;
+                                        DWORD dwLen = 4096;
+                                        BYTE* pcbData = new BYTE[dwLen];
+                                        if (pcbData)
+                                        {
+                                            ZeroMemory(pcbData, dwLen);
+                                            STORAGE_DEVICE_DESCRIPTOR* pDescriptor = NULL;
+                                            STORAGE_PROPERTY_QUERY sQuery = { 0 };
+                                            
+                                            sQuery.PropertyId = StorageDeviceProperty;
+                                            sQuery.QueryType = PropertyStandardQuery;
+                                            sQuery.AdditionalParameters[0] = NULL;
+
+                                            if (DeviceIoControl(hDisk, IOCTL_STORAGE_QUERY_PROPERTY, &sQuery, sizeof(STORAGE_PROPERTY_QUERY), pcbData, dwLen, &dwRet, NULL))
+                                            {
+                                                pDescriptor = (STORAGE_DEVICE_DESCRIPTOR*)pcbData;
+
+                                                switch (pDescriptor->BusType)
+                                                {
+                                                case BusTypeUnknown:
+                                                    interfaceTypeWmi = _T("Unknown");
+                                                    break;
+                                                case BusTypeScsi:
+                                                    interfaceTypeWmi = _T("SCSI");
+                                                    break;
+                                                case BusTypeAtapi:
+                                                    interfaceTypeWmi = _T("Atapi");
+                                                    break;
+                                                case BusTypeAta:
+                                                    interfaceTypeWmi = _T("ATA");
+                                                    break;
+                                                case BusType1394:
+                                                    interfaceTypeWmi = _T("1394");
+                                                    break;
+                                                case BusTypeSsa:
+                                                    interfaceTypeWmi = _T("SSA");
+                                                    break;
+                                                case BusTypeFibre:
+                                                    interfaceTypeWmi = _T("Fibre");
+                                                    break;
+                                                case BusTypeUsb:
+                                                    interfaceTypeWmi = _T("USB");
+                                                    break;
+                                                case BusTypeRAID:
+                                                    interfaceTypeWmi = _T("RAID");
+                                                    break;
+                                                case BusTypeiScsi:
+                                                    interfaceTypeWmi = _T("iSCSI");
+                                                    break;
+                                                case BusTypeSas:
+                                                    interfaceTypeWmi = _T("SAS");
+                                                    break;
+                                                case BusTypeSata:
+                                                    interfaceTypeWmi = _T("SATA");
+                                                    break;
+                                                case BusTypeSd:
+                                                    interfaceTypeWmi = _T("SD");
+                                                    break;
+                                                case BusTypeMmc:
+                                                    interfaceTypeWmi = _T("MMC");
+                                                    break;
+                                                case BusTypeVirtual:
+                                                    interfaceTypeWmi = _T("Virtual");
+                                                    break;
+                                                case BusTypeFileBackedVirtual:
+                                                    interfaceTypeWmi = _T("File");
+                                                    break;
+                                                case BusTypeSpaces:
+                                                    interfaceTypeWmi = _T("Spaces");
+                                                    break;
+                                                case BusTypeNvme:
+                                                    interfaceTypeWmi = _T("NVMe");
+                                                    break;
+                                                case BusTypeSCM:
+                                                    interfaceTypeWmi = _T("SCM");
+                                                    break;
+                                                case BusTypeUfs:
+                                                    interfaceTypeWmi = _T("UFS");
+                                                    break;
+                                                default:
+                                                    interfaceTypeWmi = _T("Unknown");
+                                                    break;
+                                                }
+                                                DebugPrint(_T("interfaceTypeWmi:") + interfaceTypeWmi);
+                                            }
+                                            delete[] pcbData;
+                                        }
+
 										safeCloseHandle(hDisk);
 									}
+                                    else
+                                    {
+                                        DebugPrint(_T("CreateFile(PhysicalDrive) failed"));
+                                    }
 								}
 								free(pInterfaceList);
 							}
@@ -1886,79 +1990,41 @@ VOID CAtaSmart::Init(BOOL useWmi, BOOL advancedDiskSearch, PBOOL flagChangeDisk,
 							goto NextDisk;
 						}
 
-						deviceId.Format(_T("\\\\.\\PHYSICALDRIVE%d"), physicalDriveId);
-						DebugPrint(_T("deviceId:") + deviceId);
+                        deviceId.Format(_T("\\\\.\\PHYSICALDRIVE%d"), physicalDriveId);
+                        DebugPrint(_T("deviceId:") + deviceId);
 
-
-                        if (DoCM_Get_DevNode_Registry_PropertyW(&devInst, (DEVINSTID_W)pszId, CM_DRP_FRIENDLYNAME, szBuf) != CR_SUCCESS)
+                        if (DoCM_Get_DevNode_Registry_PropertyW(&devInst, (DEVINSTID_W)szDevId, CM_DRP_FRIENDLYNAME, szBuf) != CR_SUCCESS)
                         {
-                            DoCM_Get_DevNode_Registry_PropertyW(&devInst, (DEVINSTID_W)pszId, CM_DRP_DEVICEDESC, szBuf);
+                            DoCM_Get_DevNode_Registry_PropertyW(&devInst, (DEVINSTID_W)szDevId, CM_DRP_DEVICEDESC, szBuf);
                         }
 						model = szBuf;
 						DebugPrint(_T("model:") + model);
 
-						ULONG cchDevId = sizeof(szBuf);
-						if (CM_Get_Device_IDW(devInst, szBuf, cchDevId, 0) == CR_SUCCESS)
-						{
-							pnpDeviceId = szBuf;
-							DebugPrint(_T("pnpDeviceId:") + pnpDeviceId);
-							pnpDeviceId.MakeUpper();
-						}
+                        pnpDeviceId = szDevId;
+                        DebugPrint(_T("pnpDeviceId:") + pnpDeviceId);
+                        pnpDeviceId.MakeUpper();
 
-						// Get Size / SCSIPort / SCSITargetId / SCSIBus / MediaType
-						CString physPath;
-						physPath.Format(_T("\\\\.\\PhysicalDrive%d"), physicalDriveId);
-						HANDLE hDisk = CreateFileW(physPath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
-
-						if (hDisk != INVALID_HANDLE_VALUE && hDisk != NULL)
-						{
-							// Size
-							GET_LENGTH_INFORMATION lenInfo = {};
-							DWORD dwRet = 0;
-							if (DeviceIoControl(hDisk, IOCTL_DISK_GET_LENGTH_INFO, NULL, 0, &lenInfo, sizeof(lenInfo), &dwRet, NULL))
-							{
-								diskSize.Format(_T("%I64u"), (ULONGLONG)lenInfo.Length.QuadPart);
-								DebugPrint(_T("diskSize:") + diskSize);
-							}
-
-							// MediaType
-							DISK_GEOMETRY dg = {};
-							if (DeviceIoControl(hDisk, IOCTL_DISK_GET_DRIVE_GEOMETRY, NULL, 0, &dg, sizeof(dg), &dwRet, NULL))
-							{
-								if (dg.MediaType == FixedMedia)
-									mediaType = _T("fixed");
-								else
-									mediaType = _T("removable");
-								DebugPrint(_T("mediaType:") + mediaType);
-								mediaType.MakeLower();
-							}
-
-							// SCSIPort / SCSITargetId / SCSIBus
-							SCSI_ADDRESS sa = {};
-							if (DeviceIoControl(hDisk, IOCTL_SCSI_GET_ADDRESS, NULL, 0, &sa, sizeof(sa), &dwRet, NULL))
-							{
-								scsiPort = sa.PortNumber;
-								scsiTargetId = sa.TargetId;
-								scsiBus = sa.PathId;
-							}
-
-							safeCloseHandle(hDisk);
-						}
-						else
-						{
-							DebugPrint(_T("CreateFile(PhysicalDrive) failed"));
-						}
-
-						// InterfaceType
-						if (pnpDeviceId.Find(_T("USB")) >= 0 || model.Find(_T(" USB Device")) > 0)
-						{
-							interfaceTypeWmi = _T("USB");
-						}
-						else if (pnpDeviceId.Find(_T("1394")) >= 0 || model.Find(_T(" IEEE 1394 SBP2 Device")) > 0)
-						{
-							interfaceTypeWmi = _T("1394");
-						}
-						DebugPrint(_T("interfaceTypeWmi:") + interfaceTypeWmi);
+                        // Father Device ID     Controller
+                        if (COMPATIBLEIDSList)
+                        {
+                            free(COMPATIBLEIDSList);
+                            COMPATIBLEIDSList = NULL;
+                        }
+                        DEVINST ParentInst;
+                        ZeroMemory(ParentDevId, MAX_DEVICE_ID_LEN * sizeof(WCHAR));
+                        if (CM_Get_Parent(&ParentInst, devInst, 0) == CR_SUCCESS)
+                        {
+                            if (CM_Get_Device_IDW(ParentInst, ParentDevId, MAX_DEVICE_ID_LEN, 0) == CR_SUCCESS)
+                            {
+                                CString parentDevIdStr(ParentDevId);
+                                parentDevIdStr.MakeUpper();
+                                DebugPrint(_T("ParentDevId:") + parentDevIdStr);
+                                if (ParentDevId[0] != L'\0')
+                                {
+                                    DoCM_Get_DevNode_Registry_PropertyW(&ParentInst, (DEVINSTID_W)ParentDevId, CM_DRP_COMPATIBLEIDS, COMPATIBLEIDSList);
+                                }
+                            }
+                        }
 
 						if (!mediaType.IsEmpty())
 						{
@@ -2262,6 +2328,7 @@ VOID CAtaSmart::Init(BOOL useWmi, BOOL advancedDiskSearch, PBOOL flagChangeDisk,
 			{
 				DebugPrint(_T("EX:SELECT * FROM Win32_DiskDrive"));
 			}
+            //*/
 
 			// Drive Letter Mapping Start
 			/*
