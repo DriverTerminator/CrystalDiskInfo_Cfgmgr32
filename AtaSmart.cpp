@@ -1892,7 +1892,7 @@ VOID CAtaSmart::Init(BOOL useWmi, BOOL advancedDiskSearch, PBOOL flagChangeDisk,
                                         {
                                             ZeroMemory(pcbData, dwLen);
                                             STORAGE_DEVICE_DESCRIPTOR* pDescriptor = NULL;
-                                            STORAGE_PROPERTY_QUERY sQuery = { 0 };
+                                            STORAGE_PROPERTY_QUERY sQuery = {};
                                             
                                             sQuery.PropertyId = StorageDeviceProperty;
                                             sQuery.QueryType = PropertyStandardQuery;
