@@ -1795,6 +1795,9 @@ VOID CAtaSmart::Init(BOOL useWmi, BOOL advancedDiskSearch, PBOOL flagChangeDisk,
 					BOOL flagUasp = FALSE;
 					BOOL flagNVMe = FALSE;
 					DWORD siliconImageType = 0;
+                    CAtaSmart::INTERFACE_TYPE interfaceType = CAtaSmart::INTERFACE_TYPE::INTERFACE_TYPE_UNKNOWN;
+                    CAtaSmart::COMMAND_TYPE commandType = CAtaSmart::COMMAND_TYPE::CMD_TYPE_UNKNOWN;
+                    CAtaSmart::VENDOR_ID vendor = CAtaSmart::VENDOR_ID::VENDOR_UNKNOWN;
 
 					try
 					{
@@ -1901,7 +1904,6 @@ VOID CAtaSmart::Init(BOOL useWmi, BOOL advancedDiskSearch, PBOOL flagChangeDisk,
                                             if (DeviceIoControl(hDisk, IOCTL_STORAGE_QUERY_PROPERTY, &sQuery, sizeof(STORAGE_PROPERTY_QUERY), pcbData, dwLen, &dwRet, NULL))
                                             {
                                                 pDescriptor = (STORAGE_DEVICE_DESCRIPTOR*)pcbData;
-
                                                 switch (pDescriptor->BusType)
                                                 {
                                                 case BusTypeUnknown:
@@ -1970,6 +1972,48 @@ VOID CAtaSmart::Init(BOOL useWmi, BOOL advancedDiskSearch, PBOOL flagChangeDisk,
                                                 }
                                                 DebugPrint(_T("interfaceTypeWmi:") + interfaceTypeWmi);
                                             }
+                                            if (pDescriptor->ProductIdOffset)
+                                            {
+                                                model = (char*)pDescriptor + pDescriptor->ProductIdOffset;
+                                            }
+                                            if (pDescriptor->ProductRevisionOffset)
+                                            {
+                                                firmware = (char*)pDescriptor + pDescriptor->ProductRevisionOffset;
+                                            }
+                                            /*
+                                            // [2019/10/28] Workaround for NVMe SSD on MS Storage Space
+#ifdef _WIN64
+                                            if (pDescriptor->BusType == BusTypeNvme)
+#else
+                                            if (pDescriptor->BusType == 17 //BusTypeNvme//)
+#endif
+                                            {
+                                                interfaceType = INTERFACE_TYPE_NVME;
+                                            }
+                                            */
+                                            /*
+                                            // [2010/12/05] Workaround for SAMSUNG HD204UI
+                                            // http://sourceforge.net/apps/trac/smartmontools/wiki/SamsungF4EGBadBlocks
+                                            if ((model.Find(_T("SAMSUNG HD155UI")) == 0 || model.Find(_T("SAMSUNG HD204UI")) == 0) && firmware.Find(_T("1AQ10003")) != 0 && IsWorkaroundHD204UI)
+                                            {
+                                                continue;
+                                            }
+
+                                            // [2018/10/24] Workaround for FuzeDrive (AMDStoreMi)
+                                            if (model.Find(_T("FuzeDrive")) != -1 || model.Find(_T("StoreMI")) != -1)
+                                            {
+                                                continue;
+                                            }
+
+                                            DebugPrint(_T("USB-HDD Check"));
+                                            DebugPrint(_T("Check Bus Type"));
+                                            if (pDescriptor->BusType == BusTypeUsb)
+                                            {
+                                                DebugPrint(_T("Bus Type = USB"));
+                                                interfaceType = INTERFACE_TYPE_USB;
+                                                vendor = USB_VENDOR_ALL;
+                                            }
+                                            */
                                             delete[] pcbData;
                                         }
 
@@ -1992,13 +2036,14 @@ VOID CAtaSmart::Init(BOOL useWmi, BOOL advancedDiskSearch, PBOOL flagChangeDisk,
 
                         deviceId.Format(_T("\\\\.\\PHYSICALDRIVE%d"), physicalDriveId);
                         DebugPrint(_T("deviceId:") + deviceId);
-
+                        /*
                         if (DoCM_Get_DevNode_Registry_PropertyW(&devInst, (DEVINSTID_W)szDevId, CM_DRP_FRIENDLYNAME, szBuf) != CR_SUCCESS)
                         {
                             DoCM_Get_DevNode_Registry_PropertyW(&devInst, (DEVINSTID_W)szDevId, CM_DRP_DEVICEDESC, szBuf);
                         }
 						model = szBuf;
-						DebugPrint(_T("model:") + model);
+						*/
+                        DebugPrint(_T("model:") + model);
 
                         pnpDeviceId = szDevId;
                         DebugPrint(_T("pnpDeviceId:") + pnpDeviceId);
@@ -2130,6 +2175,28 @@ VOID CAtaSmart::Init(BOOL useWmi, BOOL advancedDiskSearch, PBOOL flagChangeDisk,
 							{
 								flagTarget = TRUE;
 							}
+
+                            if (!flagNVMe)
+                            {
+                                // 补充判断一下NVMe
+                                if (COMPATIBLEIDSList)
+                                {
+                                    WCHAR* p = COMPATIBLEIDSList;
+                                    while (*p != L'\0')
+                                    {
+                                        if (!_wcsicmp(p, L"PCI\\CC_010802") || !_wcsicmp(p, L"PCI\\CC_018002"))     //苹果NVMe为018002
+                                        {
+                                            DebugPrint(_T("INTERFACE_TYPE_NVME_By_COMPATIBLEIDSList"));
+                                            interfaceType = INTERFACE_TYPE_NVME;
+                                            flagNVMe = TRUE;
+                                            break;
+                                        }
+                                        p += lstrlenW(p) + 1;
+                                    }
+                                    //free(COMPATIBLEIDSList);
+                                    //COMPATIBLEIDSList = NULL;
+                                }
+                            }
 
 							cstr.Format(L"InterfaceTypeId=%d", interfaceType);
 							DebugPrint(cstr);
@@ -2418,7 +2485,8 @@ VOID CAtaSmart::Init(BOOL useWmi, BOOL advancedDiskSearch, PBOOL flagChangeDisk,
 	// \\\\.\\PhysicalDrive%d
 	for(int i = 0; i < MAX_SEARCH_PHYSICAL_DRIVE; i++)
 	{
-		BOOL	flagChecked = FALSE;
+		continue;
+        BOOL	flagChecked = FALSE;
 		BOOL	bRet = FALSE;
 		HANDLE	hIoCtrl = NULL;
 		DWORD	dwReturned = 0;
@@ -2437,7 +2505,7 @@ VOID CAtaSmart::Init(BOOL useWmi, BOOL advancedDiskSearch, PBOOL flagChangeDisk,
 
 		for(int j = 0; j < m_BlackPhysicalDrive.GetCount(); j++)
 		{
-			if(i == m_BlackPhysicalDrive.GetAt(j))
+            if(i == m_BlackPhysicalDrive.GetAt(j))
 			{
 				flagChecked = TRUE;
 			}
