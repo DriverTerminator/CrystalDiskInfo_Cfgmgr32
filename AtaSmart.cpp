@@ -2485,12 +2485,14 @@ VOID CAtaSmart::Init(BOOL useWmi, BOOL advancedDiskSearch, PBOOL flagChangeDisk,
 	// \\\\.\\PhysicalDrive%d
 	for(int i = 0; i < MAX_SEARCH_PHYSICAL_DRIVE; i++)
 	{
-		continue;
+		//continue;
         BOOL	flagChecked = FALSE;
 		BOOL	bRet = FALSE;
 		HANDLE	hIoCtrl = NULL;
 		DWORD	dwReturned = 0;
-		DISK_GEOMETRY dg = {};
+		DISK_GEOMETRY dg = { 0 };
+        CString model, firmware, diskSize, mediaType;
+        INT scsiPort = -1, scsiTargetId = -1, scsiBus = -1;
 		CAtaSmart::INTERFACE_TYPE interfaceType = CAtaSmart::INTERFACE_TYPE::INTERFACE_TYPE_UNKNOWN;
 		CAtaSmart::COMMAND_TYPE commandType = CAtaSmart::COMMAND_TYPE::CMD_TYPE_UNKNOWN;
 		CAtaSmart::VENDOR_ID vendor = CAtaSmart::VENDOR_ID::VENDOR_UNKNOWN;
@@ -2525,9 +2527,19 @@ VOID CAtaSmart::Init(BOOL useWmi, BOOL advancedDiskSearch, PBOOL flagChangeDisk,
 			continue;
 		}
 ///		DebugPrint(_T("DeviceIoControl"));
+        // MediaType
 		bRet = ::DeviceIoControl(hIoCtrl, IOCTL_DISK_GET_DRIVE_GEOMETRY, 
 			NULL, 0, &dg, sizeof(DISK_GEOMETRY),
 			&dwReturned, NULL);
+        if (bRet)
+        {
+            if (dg.MediaType == FixedMedia)
+                mediaType = _T("fixed");
+            else
+                mediaType = _T("removable");
+            DebugPrint(_T("mediaType:") + mediaType);
+            mediaType.MakeLower();
+        }
 		if(bRet == FALSE || dwReturned != sizeof(DISK_GEOMETRY) || dg.MediaType != FixedMedia)
 		{
 ///			DebugPrint(_T("CloseHandle - continue"));
@@ -2542,7 +2554,28 @@ VOID CAtaSmart::Init(BOOL useWmi, BOOL advancedDiskSearch, PBOOL flagChangeDisk,
 		BYTE*	pcbData = new BYTE[dwLen];
 		STORAGE_DEVICE_DESCRIPTOR*	pDescriptor = NULL;
 		STORAGE_PROPERTY_QUERY		sQuery = {};
-		CString model, firmware;
+		//CString model, firmware, diskSize, mediaType;
+        //INT scsiPort = -1, scsiTargetId = -1, scsiBus = -1;
+
+        // Get Size / SCSIPort / SCSITargetId / SCSIBus / MediaType
+        // Size
+        GET_LENGTH_INFORMATION lenInfo = { 0 };
+        dwRet = 0;
+        if (DeviceIoControl(hIoCtrl, IOCTL_DISK_GET_LENGTH_INFO, NULL, 0, &lenInfo, sizeof(lenInfo), &dwRet, NULL))
+        {
+            diskSize.Format(_T("%I64u"), (ULONGLONG)lenInfo.Length.QuadPart);
+            DebugPrint(_T("diskSize:") + diskSize);
+        }
+
+        // SCSIPort / SCSITargetId / SCSIBus
+        dwRet = 0;
+        SCSI_ADDRESS sa = { 0 };
+        if (DeviceIoControl(hIoCtrl, IOCTL_SCSI_GET_ADDRESS, NULL, 0, &sa, sizeof(sa), &dwRet, NULL))
+        {
+            scsiPort = sa.PortNumber;
+            scsiTargetId = sa.TargetId;
+            scsiBus = sa.PathId;
+        }
 
 		if(pcbData == NULL)
 		{
@@ -2634,6 +2667,23 @@ VOID CAtaSmart::Init(BOOL useWmi, BOOL advancedDiskSearch, PBOOL flagChangeDisk,
 		{
 			DebugPrint(_T("OK:GetDiskInfo"));
 			int index = (int)vars.GetCount() - 1;
+
+            if (!diskSize.IsEmpty())
+            {
+                vars[index].DiskSizeWmi = (DWORD)(_ttoi64(diskSize) / 1000 / 1000 - 49);
+                if (0 < vars[index].TotalDiskSize && vars[index].TotalDiskSize < 1000) // < 1GB
+                {
+                    //	vars[index].TotalDiskSize == vars[index].DiskSizeChs;
+                }
+                else if (vars[index].TotalDiskSize < 10 * 1000) // < 10GB
+                {
+                    vars[index].TotalDiskSize = vars[index].DiskSizeWmi;
+                }
+                else if (vars[index].TotalDiskSize < vars[index].DiskSizeWmi)
+                {
+                    //	vars[index].TotalDiskSize = vars[index].DiskSizeWmi;
+                }
+            }
 			
 			CString cmp, cstr;
 
